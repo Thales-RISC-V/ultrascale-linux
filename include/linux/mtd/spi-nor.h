@@ -28,7 +28,6 @@
 #define SNOR_MFR_SPANSION	CFI_MFR_AMD
 #define SNOR_MFR_SST		CFI_MFR_SST
 #define SNOR_MFR_WINBOND	0xef /* Also used by some Spansion */
-#define SNOR_MFR_ISSI		CFI_MFR_ISSI
 
 /*
  * Note on opcode nomenclature: some opcodes have a format like
@@ -237,5 +236,14 @@ static inline struct device_node *spi_nor_get_flash_node(struct spi_nor *nor)
  * Return: 0 for success, others for failure.
  */
 int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode);
+
+/**
+ * spi_nor_shutdown() - prepare for reboot
+ * @nor:	the spi_nor structure
+ *
+ * The drivers can use this fuction to get the address back to
+ * 0 as will be required for a ROM boot.
+ */
+void spi_nor_shutdown(struct spi_nor *nor);
 
 #endif

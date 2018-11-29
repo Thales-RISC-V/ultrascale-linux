@@ -163,6 +163,7 @@ static inline void arch_spin_unlock(arch_spinlock_t *lock)
 	/* LSE atomics */
 	"	mov	%w1, #1\n"
 	"	staddlh	%w1, %0\n"
+	"	sev\n"
 	__nops(1))
 	: "=Q" (lock->owner), "=&r" (tmp)
 	:

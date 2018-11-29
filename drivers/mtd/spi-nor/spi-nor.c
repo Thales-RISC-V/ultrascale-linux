@@ -76,7 +76,7 @@ struct flash_info {
 					 * bit. Must be used with
 					 * SPI_NOR_HAS_LOCK.
 						*/
-#define	SST_GLOBAL_PROT_UNLK	BIT(10)	/* Unlock the Global protection for
+#define	SST_GLOBAL_PROT_UNLK	0x100	/* Unlock the Global protection for
 					 * sst flashes
 					 */
 
@@ -533,7 +533,6 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	} else {
 		while (len) {
 
-			write_enable(nor);
 			offset = addr;
 			if (nor->isparallel == 1)
 				offset /= 2;
@@ -548,6 +547,12 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 						~SPI_MASTER_U_PAGE;
 				}
 			}
+
+			/* Wait until finished previous write command. */
+			ret = spi_nor_wait_till_ready(nor);
+			if (ret)
+				goto erase_err;
+
 			if (nor->addr_width == 3) {
 				/* Update Extended Address Register */
 				ret = write_ear(nor, offset);
@@ -1186,7 +1191,6 @@ static const struct flash_info spi_nor_ids[] = {
 	{ "640s33b",  INFO(0x898913, 0, 64 * 1024, 128, 0) },
 
 	/* ISSI */
-	{ "is25lp256d", INFO(0x9d6019, 0, 64 * 1024, 512, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | USE_FSR | SPI_NOR_HAS_LOCK) },
 	{ "is25cd512", INFO(0x7f9d20, 0, 32 * 1024,   2, SECT_4K) },
 
 	/* Macronix */
@@ -1213,7 +1217,7 @@ static const struct flash_info spi_nor_ids[] = {
 	{ "n25q064a",    INFO(0x20bb17, 0, 64 * 1024,  128, SECT_4K | SPI_NOR_QUAD_READ) },
 	{ "n25q128a11",  INFO(0x20bb18, 0, 64 * 1024,  256, SECT_4K | SPI_NOR_QUAD_READ | USE_FSR | SPI_NOR_HAS_LOCK) },
 	{ "n25q128a13",  INFO(0x20ba18, 0, 64 * 1024,  256, SECT_4K | SPI_NOR_QUAD_READ | USE_FSR | SPI_NOR_HAS_LOCK) },
-	{ "n25q256a",    INFO(0x20bb19, 0, 64 * 1024,  512, SECT_4K | SPI_NOR_QUAD_READ | USE_FSR| SPI_NOR_HAS_LOCK) },
+	{ "n25q256a",    INFO(0x20ba19, 0, 64 * 1024,  512, SECT_4K | SPI_NOR_QUAD_READ | USE_FSR| SPI_NOR_HAS_LOCK) },
 	{ "n25q256a13",  INFO(0x20ba19, 0, 64 * 1024,  512, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | USE_FSR | SPI_NOR_HAS_LOCK) },
 	{ "n25q512a",    INFO(0x20bb20, 0, 64 * 1024, 1024, SECT_4K | USE_FSR | SPI_NOR_QUAD_READ | SPI_NOR_HAS_LOCK) },
 	{ "n25q512a13",  INFO(0x20ba20, 0, 64 * 1024, 1024, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | USE_FSR | SPI_NOR_HAS_LOCK) },
@@ -1237,7 +1241,7 @@ static const struct flash_info spi_nor_ids[] = {
 	{ "s70fl01gs",  INFO(0x010221, 0x4d00, 256 * 1024, 256, SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
 	{ "s25sl12800", INFO(0x012018, 0x0300, 256 * 1024,  64, SPI_NOR_HAS_LOCK) },
 	{ "s25sl12801", INFO(0x012018, 0x0301,  64 * 1024, 256, SPI_NOR_HAS_LOCK) },
-	{ "s25fl128s",	INFO6(0x012018, 0x4d0180, 64 * 1024, 256, SPI_NOR_QUAD_READ) },
+	{ "s25fl128s",	INFO6(0x012018, 0x4d0180, 64 * 1024, 256, SECT_4K | SPI_NOR_QUAD_READ) },
 	{ "s25fl129p0", INFO(0x012018, 0x4d00, 256 * 1024,  64, SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_HAS_LOCK) },
 	{ "s25fl129p1", INFO(0x012018, 0x4d01,  64 * 1024, 256, SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_HAS_LOCK) },
 	{ "s25sl004a",  INFO(0x010212,      0,  64 * 1024,   8, 0) },
@@ -1550,33 +1554,76 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 	size_t *retlen, const u_char *buf)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
-	size_t page_offset, page_remain, i;
-	ssize_t ret;
-	u32 offset, stack_shift=0;
-	u8 bank = 0;
+	u32 page_offset, page_size, i;
+	int ret;
+
+	dev_dbg(nor->dev, "to 0x%08x, len %zd\n", (u32)to, len);
+	/* Wait until finished previous write command. */
+	ret = spi_nor_wait_till_ready(nor);
+	if (ret)
+		return ret;
+
+	write_enable(nor);
+
+	page_offset = to & (nor->page_size - 1);
+
+	/* do all the bytes fit onto one page? */
+	if (page_offset + len <= nor->page_size) {
+		*retlen += nor->write(nor, to >> nor->shift, len, buf);
+	} else {
+		/* the size of data remaining on the first page */
+		page_size = nor->page_size - page_offset;
+		*retlen += nor->write(nor, to >> nor->shift, page_size, buf);
+
+		/* write everything in nor->page_size chunks */
+		for (i = page_size; i < len; i += page_size) {
+			page_size = len - i;
+			if (page_size > nor->page_size)
+				page_size = nor->page_size;
+
+			ret = spi_nor_wait_till_ready(nor);
+			if (ret)
+				return ret;
+			write_enable(nor);
+
+			*retlen += nor->write(nor, (to + i) >> nor->shift, page_size,
+				   buf + i);
+		}
+	}
+
+	return 0;
+}
+
+static int spi_nor_write_ext(struct mtd_info *mtd, loff_t to, size_t len,
+	size_t *retlen, const u_char *buf)
+{
+	struct spi_nor *nor = mtd_to_spi_nor(mtd);
+	u32 addr = to;
+	u32 offset = to;
+	u32 write_len = 0;
+	size_t actual_len = 0;
+	u32 write_count = 0;
 	u32 rem_bank_len = 0;
+	u8 bank = 0;
+	u8 stack_shift = 0;
+	int ret;
 
 #define OFFSET_16_MB 0x1000000
 
 	dev_dbg(nor->dev, "to 0x%08x, len %zd\n", (u32)to, len);
+
 	ret = spi_nor_lock_and_prep(nor, SPI_NOR_OPS_WRITE);
 	if (ret)
 		return ret;
-	for (i = 0; i < len; ) {
-		ssize_t written;
 
+	while (len) {
+		actual_len = 0;
 		if (nor->addr_width == 3) {
-			bank = (u32)to / (OFFSET_16_MB << nor->shift);
+			bank = addr / (OFFSET_16_MB << nor->shift);
 			rem_bank_len = ((OFFSET_16_MB << nor->shift) *
-							(bank + 1)) - to;
+							(bank + 1)) - addr;
 		}
-
-		page_offset = ((to + i)) & (nor->page_size - 1);
-
-		offset = (to + i);
-
-		if (nor->isparallel == 1)
-			offset /= 2;
+		offset = addr;
 
 		if (nor->isstacked == 1) {
 			stack_shift = 1;
@@ -1587,51 +1634,27 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 				nor->spi->master->flags &= ~SPI_MASTER_U_PAGE;
 			}
 		}
-
 		/* Die cross over issue is not handled */
 		if (nor->addr_width == 4)
 			rem_bank_len = (mtd->size >> stack_shift) - offset;
 		if (nor->addr_width == 3)
 			write_ear(nor, (offset >> nor->shift));
-		if (nor->isstacked == 1) {
-			if (len <= rem_bank_len) {
-				page_remain = min_t(size_t,
-					 nor->page_size - page_offset, len - i);
-			} else {
-				/*
-				 * the size of data remaining
-				 * on the first page
-				 */
-				page_remain = rem_bank_len;
-			}
-		} else {
-			page_remain = min_t(size_t,
-					 nor->page_size - page_offset, len - i);
-		}
-		ret = spi_nor_wait_till_ready(nor);
+		if (len < rem_bank_len)
+			write_len = len;
+		else
+			write_len = rem_bank_len;
+
+		ret = spi_nor_write(mtd, offset, write_len, &actual_len, buf);
 		if (ret)
 			goto write_err;
 
-		write_enable(nor);
-
-		ret = nor->write(nor, (offset), page_remain, buf + i);
-		if (ret < 0)
-			goto write_err;
-		written = ret;
-
-		ret = spi_nor_wait_till_ready(nor);
-		if (ret)
-			goto write_err;
-		*retlen += written;
-		i += written;
-		if (written != page_remain) {
-			dev_err(nor->dev,
-				"While writing %zu bytes written %zd bytes\n",
-				page_remain, written);
-			ret = -EIO;
-			goto write_err;
-		}
+		addr += actual_len;
+		len -= actual_len;
+		buf += actual_len;
+		write_count += actual_len;
 	}
+
+	*retlen = write_count;
 
 write_err:
 	spi_nor_unlock_and_unprep(nor, SPI_NOR_OPS_WRITE);
@@ -1694,7 +1717,6 @@ static int set_quad_mode(struct spi_nor *nor, const struct flash_info *info)
 
 	switch (JEDEC_MFR(info)) {
 	case SNOR_MFR_MACRONIX:
-	case SNOR_MFR_ISSI:
 		status = macronix_quad_enable(nor);
 		if (status) {
 			dev_err(nor->dev, "Macronix quad-read not enabled\n");
@@ -1886,7 +1908,7 @@ int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode)
 	if (info->flags & SST_WRITE)
 		mtd->_write = sst_write;
 	else
-		mtd->_write = spi_nor_write;
+		mtd->_write = spi_nor_write_ext;
 
 	if (info->flags & USE_FSR)
 		nor->flags |= SNOR_F_USE_FSR;
@@ -2004,23 +2026,13 @@ int spi_nor_scan(struct spi_nor *nor, const char *name, enum read_mode mode)
 			/* No small sector erase for 4-byte command set */
 			nor->erase_opcode = SPINOR_OP_SE_4B;
 			mtd->erasesize = info->sector_size;
-		} else {
-			np_spi = of_get_next_parent(np);
-			if (of_property_match_string(np_spi, "compatible",
-						"xlnx,xps-spi-2.00.a") >= 0) {
-				nor->addr_width = 3;
-				set_4byte(nor, info, 0);
-			} else {
+		} else
+			set_4byte(nor, info, 1);
+			if (nor->isstacked) {
+				nor->spi->master->flags |= SPI_MASTER_U_PAGE;
 				set_4byte(nor, info, 1);
-				if (nor->isstacked) {
-					nor->spi->master->flags |=
-							SPI_MASTER_U_PAGE;
-					set_4byte(nor, info, 1);
-					nor->spi->master->flags &=
-							~SPI_MASTER_U_PAGE;
-				}
+				nor->spi->master->flags &= ~SPI_MASTER_U_PAGE;
 			}
-		}
 #ifdef CONFIG_OF
 		}
 #endif
@@ -2070,6 +2082,29 @@ static const struct flash_info *spi_nor_match_id(const char *name)
 	}
 	return NULL;
 }
+
+void spi_nor_shutdown(struct spi_nor *nor)
+{
+	struct mtd_info *mtd = &nor->mtd;
+	int code;
+
+	if (nor->addr_width == 3 &&
+		(mtd->size >> nor->shift) > 0x1000000) {
+		if (spi_nor_wait_till_ready(nor))
+			return;
+
+		if (nor->jedec_id == CFI_MFR_AMD)
+			code = SPINOR_OP_BRWR;
+		if (nor->jedec_id == CFI_MFR_ST) {
+			write_enable(nor);
+			code = SPINOR_OP_WREAR;
+		}
+		nor->cmd_buf[0] = 0;
+
+		nor->write_reg(nor, code, nor->cmd_buf, 1);
+	}
+}
+EXPORT_SYMBOL_GPL(spi_nor_shutdown);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Huang Shijie <shijie8@gmail.com>");

@@ -20,6 +20,7 @@
 #include <drm/drm_gem_cma_helper.h>
 
 #include <linux/component.h>
+#include <linux/console.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/of_graph.h>
@@ -71,7 +72,7 @@ struct xilinx_video_format_desc {
 	unsigned int depth;
 	unsigned int bpp;
 	unsigned int xilinx_format;
-	u32 drm_format;
+	uint32_t drm_format;
 };
 
 static const struct xilinx_video_format_desc xilinx_video_formats[] = {
@@ -110,7 +111,7 @@ static const struct xilinx_video_format_desc xilinx_video_formats[] = {
  *
  * Return: true if the format is supported, or false
  */
-bool xilinx_drm_check_format(struct drm_device *drm, u32 fourcc)
+bool xilinx_drm_check_format(struct drm_device *drm, uint32_t fourcc)
 {
 	struct xilinx_drm_private *private = drm->dev_private;
 
@@ -125,7 +126,7 @@ bool xilinx_drm_check_format(struct drm_device *drm, u32 fourcc)
  *
  * Return: the corresponding DRM_FORMAT_XXX
  */
-u32 xilinx_drm_get_format(struct drm_device *drm)
+uint32_t xilinx_drm_get_format(struct drm_device *drm)
 {
 	struct xilinx_drm_private *private = drm->dev_private;
 
@@ -145,6 +146,14 @@ unsigned int xilinx_drm_get_align(struct drm_device *drm)
 	struct xilinx_drm_private *private = drm->dev_private;
 
 	return xilinx_drm_crtc_get_align(private->crtc);
+}
+
+void xilinx_drm_set_config(struct drm_device *drm, struct drm_mode_set *set)
+{
+	struct xilinx_drm_private *private = drm->dev_private;
+
+	if (private && private->fb)
+		xilinx_drm_fb_set_config(private->fb, set);
 }
 
 /* poll changed handler */
@@ -194,7 +203,7 @@ static void xilinx_drm_mode_config_init(struct drm_device *drm)
 }
 
 /* convert xilinx format to drm format by code */
-int xilinx_drm_format_by_code(unsigned int xilinx_format, u32 *drm_format)
+int xilinx_drm_format_by_code(unsigned int xilinx_format, uint32_t *drm_format)
 {
 	const struct xilinx_video_format_desc *format;
 	unsigned int i;
@@ -213,7 +222,7 @@ int xilinx_drm_format_by_code(unsigned int xilinx_format, u32 *drm_format)
 }
 
 /* convert xilinx format to drm format by name */
-int xilinx_drm_format_by_name(const char *name, u32 *drm_format)
+int xilinx_drm_format_by_name(const char *name, uint32_t *drm_format)
 {
 	const struct xilinx_video_format_desc *format;
 	unsigned int i;
@@ -232,7 +241,7 @@ int xilinx_drm_format_by_name(const char *name, u32 *drm_format)
 }
 
 /* get bpp of given format */
-unsigned int xilinx_drm_format_bpp(u32 drm_format)
+unsigned int xilinx_drm_format_bpp(uint32_t drm_format)
 {
 	const struct xilinx_video_format_desc *format;
 	unsigned int i;
@@ -247,7 +256,7 @@ unsigned int xilinx_drm_format_bpp(u32 drm_format)
 }
 
 /* get color depth of given format */
-unsigned int xilinx_drm_format_depth(u32 drm_format)
+unsigned int xilinx_drm_format_depth(uint32_t drm_format)
 {
 	const struct xilinx_video_format_desc *format;
 	unsigned int i;
@@ -295,8 +304,8 @@ static int xilinx_drm_load(struct drm_device *drm, unsigned long flags)
 	struct device_node *encoder_node, *ep = NULL, *remote;
 	struct platform_device *pdev = drm->platformdev;
 	struct component_match *match = NULL;
-	unsigned int align, depth, i = 0;
-	int bpp, ret;
+	unsigned int bpp, align, i = 0;
+	int ret;
 
 	private = devm_kzalloc(drm->dev, sizeof(*private), GFP_KERNEL);
 	if (!private)
@@ -368,19 +377,15 @@ static int xilinx_drm_load(struct drm_device *drm, unsigned long flags)
 	xilinx_drm_mode_config_init(drm);
 
 	/* initialize xilinx framebuffer */
-	drm_fb_get_bpp_depth(xilinx_drm_crtc_get_format(private->crtc),
-			     &depth, &bpp);
-	if (bpp) {
-		align = xilinx_drm_crtc_get_align(private->crtc);
-		private->fb = xilinx_drm_fb_init(drm, bpp, 1, 1, align,
-						 xilinx_drm_fbdev_vres);
-		if (IS_ERR(private->fb)) {
-			DRM_ERROR("failed to initialize drm fb\n");
-			private->fb = NULL;
-		}
+	bpp = xilinx_drm_format_bpp(xilinx_drm_crtc_get_format(private->crtc));
+	align = xilinx_drm_crtc_get_align(private->crtc);
+	private->fb = xilinx_drm_fb_init(drm, bpp, 1, 1, align,
+					 xilinx_drm_fbdev_vres);
+	if (IS_ERR(private->fb)) {
+		DRM_ERROR("failed to initialize drm cma fb\n");
+		ret = PTR_ERR(private->fb);
+		goto err_fb;
 	}
-	if (!private->fb)
-		dev_info(&pdev->dev, "fbdev is not initialized\n");
 
 	drm_kms_helper_poll_init(drm);
 
@@ -422,12 +427,12 @@ static int xilinx_drm_unload(struct drm_device *drm)
 	return 0;
 }
 
-static int xilinx_drm_open(struct drm_device *dev, struct drm_file *file)
+int xilinx_drm_open(struct drm_device *dev, struct drm_file *file)
 {
 	struct xilinx_drm_private *private = dev->dev_private;
 
 	if (!(drm_is_primary_client(file) && !dev->master) &&
-	    capable(CAP_SYS_ADMIN)) {
+			capable(CAP_SYS_ADMIN)) {
 		file->is_master = 1;
 		private->is_master = true;
 	}
@@ -519,6 +524,10 @@ static int xilinx_drm_pm_suspend(struct device *dev)
 	struct drm_connector *connector;
 
 	drm_kms_helper_poll_disable(drm);
+
+	if (!console_suspend_enabled)
+		return 0;
+
 	drm_modeset_lock_all(drm);
 	list_for_each_entry(connector, &drm->mode_config.connector_list, head) {
 		int old_dpms = connector->dpms;
@@ -540,6 +549,9 @@ static int xilinx_drm_pm_resume(struct device *dev)
 	struct xilinx_drm_private *private = dev_get_drvdata(dev);
 	struct drm_device *drm = private->drm;
 	struct drm_connector *connector;
+
+	if (!console_suspend_enabled)
+		return 0;
 
 	drm_modeset_lock_all(drm);
 	list_for_each_entry(connector, &drm->mode_config.connector_list, head) {

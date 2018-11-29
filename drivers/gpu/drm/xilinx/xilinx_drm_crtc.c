@@ -36,7 +36,6 @@
 #include "xilinx_cresample.h"
 #include "xilinx_rgb2yuv.h"
 #include "xilinx_vtc.h"
-#include "xilinx_drm_sdi.h"
 
 struct xilinx_drm_crtc {
 	struct drm_crtc base;
@@ -50,7 +49,6 @@ struct xilinx_drm_crtc {
 	unsigned int alpha;
 	struct drm_pending_vblank_event *event;
 	struct xilinx_drm_dp_sub *dp_sub;
-	struct xilinx_sdi *sdi;
 };
 
 #define to_xilinx_crtc(x)	container_of(x, struct xilinx_drm_crtc, base)
@@ -72,11 +70,12 @@ static void xilinx_drm_crtc_dpms(struct drm_crtc *base_crtc, int dpms)
 	case DRM_MODE_DPMS_ON:
 		if (!crtc->pixel_clock_enabled) {
 			ret = clk_prepare_enable(crtc->pixel_clock);
-			if (ret)
+			if (ret) {
 				DRM_ERROR("failed to enable a pixel clock\n");
-			else
-				crtc->pixel_clock_enabled = true;
+				crtc->pixel_clock_enabled = false;
+			}
 		}
+		crtc->pixel_clock_enabled = true;
 
 		xilinx_drm_plane_manager_dpms(crtc->plane_manager, dpms);
 		xilinx_drm_plane_dpms(base_crtc->primary, dpms);
@@ -159,7 +158,7 @@ static int xilinx_drm_crtc_mode_set(struct drm_crtc *base_crtc,
 	diff = clk_get_rate(crtc->pixel_clock) - adjusted_mode->clock * 1000;
 	if (abs(diff) > (adjusted_mode->clock * 1000) / 20)
 		DRM_DEBUG_KMS("actual pixel clock rate(%d) is off by %ld\n",
-			      adjusted_mode->clock, diff);
+				adjusted_mode->clock, diff);
 
 	if (crtc->vtc) {
 		/* set video timing */
@@ -178,14 +177,6 @@ static int xilinx_drm_crtc_mode_set(struct drm_crtc *base_crtc,
 				 adjusted_mode->vsync_end;
 		vm.vsync_len = adjusted_mode->vsync_end -
 			       adjusted_mode->vsync_start;
-
-		vm.flags = 0;
-		if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
-			vm.flags |= DISPLAY_FLAGS_INTERLACED;
-		if (adjusted_mode->flags & DRM_MODE_FLAG_PHSYNC)
-			vm.flags |= DISPLAY_FLAGS_HSYNC_LOW;
-		if (adjusted_mode->flags & DRM_MODE_FLAG_PVSYNC)
-			vm.flags |= DISPLAY_FLAGS_VSYNC_LOW;
 
 		xilinx_vtc_config_sig(crtc->vtc, &vm);
 	}
@@ -295,6 +286,16 @@ void xilinx_drm_crtc_destroy(struct drm_crtc *base_crtc)
 	xilinx_drm_plane_remove_manager(crtc->plane_manager);
 }
 
+/* crtc set config helper */
+int xilinx_drm_crtc_helper_set_config(struct drm_mode_set *set)
+{
+	struct drm_device *drm = set->crtc->dev;
+
+	xilinx_drm_set_config(drm, set);
+
+	return drm_crtc_helper_set_config(set);
+}
+
 /* cancel page flip functions */
 void xilinx_drm_crtc_cancel_page_flip(struct drm_crtc *base_crtc,
 				      struct drm_file *file)
@@ -344,7 +345,7 @@ static int xilinx_drm_crtc_page_flip(struct drm_crtc *base_crtc,
 	int ret;
 
 	spin_lock_irqsave(&drm->event_lock, flags);
-	if (crtc->event) {
+	if (crtc->event != NULL) {
 		spin_unlock_irqrestore(&drm->event_lock, flags);
 		return -EBUSY;
 	}
@@ -399,12 +400,6 @@ void xilinx_drm_crtc_enable_vblank(struct drm_crtc *base_crtc)
 		xilinx_drm_dp_sub_enable_vblank(crtc->dp_sub,
 						xilinx_drm_crtc_vblank_handler,
 						base_crtc);
-#ifdef CONFIG_DRM_XILINX_SDI
-	if (crtc->sdi)
-		xilinx_drm_sdi_enable_vblank(crtc->sdi,
-					     xilinx_drm_crtc_vblank_handler,
-					     base_crtc);
-#endif
 }
 
 /* disable vblank interrupt */
@@ -416,10 +411,6 @@ void xilinx_drm_crtc_disable_vblank(struct drm_crtc *base_crtc)
 		xilinx_drm_dp_sub_disable_vblank(crtc->dp_sub);
 	if (crtc->vtc)
 		xilinx_vtc_disable_vblank_intr(crtc->vtc);
-#ifdef CONFIG_DRM_XILINX_SDI
-	if (crtc->sdi)
-		xilinx_drm_sdi_disable_vblank(crtc->sdi);
-#endif
 }
 
 /**
@@ -471,7 +462,7 @@ unsigned int xilinx_drm_crtc_get_align(struct drm_crtc *base_crtc)
 
 static struct drm_crtc_funcs xilinx_drm_crtc_funcs = {
 	.destroy	= xilinx_drm_crtc_destroy,
-	.set_config	= drm_crtc_helper_set_config,
+	.set_config	= xilinx_drm_crtc_helper_set_config,
 	.page_flip	= xilinx_drm_crtc_page_flip,
 };
 
@@ -539,6 +530,7 @@ struct drm_crtc *xilinx_drm_crtc_create(struct drm_device *drm)
 			DRM_DEBUG_KMS("failed to get pixel clock\n");
 			crtc->pixel_clock = NULL;
 		}
+
 	}
 
 	ret = clk_prepare_enable(crtc->pixel_clock);
@@ -547,7 +539,7 @@ struct drm_crtc *xilinx_drm_crtc_create(struct drm_device *drm)
 		crtc->pixel_clock_enabled = false;
 		goto err_plane;
 	}
-	clk_disable_unprepare(crtc->pixel_clock);
+	crtc->pixel_clock_enabled = true;
 
 	sub_node = of_parse_phandle(drm->dev->of_node, "xlnx,vtc", 0);
 	if (sub_node) {
@@ -568,15 +560,6 @@ struct drm_crtc *xilinx_drm_crtc_create(struct drm_device *drm)
 		goto err_pixel_clk;
 	}
 
-#ifdef CONFIG_DRM_XILINX_SDI
-	crtc->sdi = xilinx_drm_sdi_of_get(drm->dev->of_node);
-	if (IS_ERR(crtc->sdi)) {
-		ret = PTR_ERR(crtc->sdi);
-		if (ret != -EPROBE_DEFER)
-			DRM_ERROR("failed to get a sdi\n");
-		goto err_pixel_clk;
-	}
-#endif
 	crtc->dpms = DRM_MODE_DPMS_OFF;
 
 	/* initialize drm crtc */

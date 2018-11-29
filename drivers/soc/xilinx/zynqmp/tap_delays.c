@@ -97,6 +97,8 @@ static void arasan_zynqmp_tap_hs(u8 deviceid, u8 timing, u8 bank)
 				     SD0_ITAPDLYSEL_HSD);
 		zynqmp_pm_mmio_write(SD_ITAP_DLY, SD0_ITAPCHGWIN_MASK, 0x0);
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYENA_MASK,
+				     SD0_OTAPDLYENA);
 		if (timing == MMC_TIMING_MMC_HS)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYSEL_MASK,
 					     SD0_OTAPDLYSEL_MMC_HSD);
@@ -113,6 +115,8 @@ static void arasan_zynqmp_tap_hs(u8 deviceid, u8 timing, u8 bank)
 				     SD1_ITAPDLYSEL_HSD);
 		zynqmp_pm_mmio_write(SD_ITAP_DLY, SD1_ITAPCHGWIN_MASK, 0x0);
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYENA_MASK,
+				     SD1_OTAPDLYENA);
 		if (timing == MMC_TIMING_MMC_HS)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYSEL_MASK,
 					     SD1_OTAPDLYSEL_MMC_HSD);
@@ -144,6 +148,8 @@ static void arasan_zynqmp_tap_ddr50(u8 deviceid, u8 timing, u8 bank)
 					     SD0_ITAPDLYSEL_MMC_DDR50);
 		zynqmp_pm_mmio_write(SD_ITAP_DLY, SD0_ITAPCHGWIN_MASK, 0x0);
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYENA_MASK,
+				     SD0_OTAPDLYENA);
 		if (timing == MMC_TIMING_UHS_DDR50)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYSEL_MASK,
 					     SD0_OTAPDLYSEL_SD_DDR50);
@@ -164,6 +170,8 @@ static void arasan_zynqmp_tap_ddr50(u8 deviceid, u8 timing, u8 bank)
 					     SD1_ITAPDLYSEL_MMC_DDR50);
 		zynqmp_pm_mmio_write(SD_ITAP_DLY, SD1_ITAPCHGWIN_MASK, 0x0);
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYENA_MASK,
+				     SD1_OTAPDLYENA);
 		if (timing == MMC_TIMING_UHS_DDR50)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYSEL_MASK,
 					     SD1_OTAPDLYSEL_SD_DDR50);
@@ -183,10 +191,14 @@ static void arasan_zynqmp_tap_sdr50(u8 deviceid, u8 timing, u8 bank)
 {
 	if (deviceid == 0) {
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYENA_MASK,
+				     SD0_OTAPDLYENA);
 		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYSEL_MASK,
 				     SD0_OTAPDLYSEL_SDR50);
 	} else {
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYENA_MASK,
+				     SD1_OTAPDLYENA);
 		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYSEL_MASK,
 				     SD1_OTAPDLYSEL_SDR50);
 	}
@@ -202,6 +214,8 @@ static void arasan_zynqmp_tap_sdr104(u8 deviceid, u8 timing, u8 bank)
 {
 	if (deviceid == 0) {
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYENA_MASK,
+				     SD0_OTAPDLYENA);
 		if (bank == MMC_BANK2)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD0_OTAPDLYSEL_MASK,
 					     SD0_OTAPDLYSEL_SDR104_B2);
@@ -210,6 +224,8 @@ static void arasan_zynqmp_tap_sdr104(u8 deviceid, u8 timing, u8 bank)
 					     SD0_OTAPDLYSEL_SDR104_B0);
 	} else {
 		/* Program OTAP */
+		zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYENA_MASK,
+				     SD1_OTAPDLYENA);
 		if (bank == MMC_BANK2)
 			zynqmp_pm_mmio_write(SD_OTAP_DLY, SD1_OTAPDLYSEL_MASK,
 					     SD1_OTAPDLYSEL_SDR104_B2);

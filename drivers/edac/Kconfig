@@ -478,8 +478,7 @@ config EDAC_XGENE
 
 config EDAC_CORTEX_ARM64
 	tristate "ARM Cortex A57/A53"
-	default y if !CPU_IDLE
-	depends on !CPU_IDLE && EDAC_MM_EDAC && ARM64
+	depends on EDAC_MM_EDAC && ARM64
 	help
 	  Support for error detection and correction on the
 	  ARM Cortex A57 and A53.

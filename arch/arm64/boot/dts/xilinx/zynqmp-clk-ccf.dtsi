@@ -100,7 +100,7 @@
 				"ams_ref", "pl0", "pl1", "pl2", "pl3", "wdt";
 	};
 
-	dp_aclk: dp_aclk {
+	dp_aclk: clock0 {
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
 		clock-frequency = <100000000>;
@@ -261,11 +261,11 @@
 };
 
 &usb0 {
-	clocks = <&clkc 32>,  <&clkc 34>;
+	clocks = <&clkc 32>,  <&clkc 35>;
 };
 
 &usb1 {
-	clocks = <&clkc 33>,  <&clkc 34>;
+	clocks = <&clkc 33>,  <&clkc 36>;
 };
 
 &watchdog0 {

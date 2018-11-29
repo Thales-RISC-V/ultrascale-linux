@@ -1,0 +1,7 @@
+config ANTMICRO_RISC_V_FT
+	tristate "Fault tolerant Risc-V CPU"
+	default m
+	---help---
+	  This driver provides support for controlling the fault tolerant
+	  implementation of the Risc-V CPU. It enables loading the CPU
+	  firmware, ressetting and controlls the fault detector module.

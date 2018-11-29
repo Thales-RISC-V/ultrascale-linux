@@ -21,7 +21,7 @@
 #include <linux/wait.h>
 #include <linux/dma/xilinx_dma.h>
 
-static unsigned int test_buf_size = 16384;
+static unsigned int test_buf_size = 64;
 module_param(test_buf_size, uint, S_IRUGO);
 MODULE_PARM_DESC(test_buf_size, "Size of the memcpy test buffer");
 
@@ -225,6 +225,9 @@ static int dmatest_slave_func(void *data)
 	thread_name = current->comm;
 
 	ret = -ENOMEM;
+
+	/* JZ: limit testing scope here */
+	test_buf_size = 700;
 
 	smp_rmb();
 	tx_chan = thread->tx_chan;
@@ -624,7 +627,6 @@ static int xilinx_axidmatest_remove(struct platform_device *pdev)
 		dmatest_cleanup_channel(dtc);
 		pr_info("xilinx_dmatest: dropped channel %s\n",
 			dma_chan_name(chan));
-		dmaengine_terminate_all(chan);
 		dma_release_channel(chan);
 	}
 	return 0;

@@ -20,7 +20,6 @@
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/usb/otg.h>
-#include <linux/usb/xhci_pdriver.h>
 
 #include "xhci.h"
 #include "xhci-plat.h"
@@ -200,9 +199,6 @@ static int xhci_plat_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	/* Set the controller as wakeup capable */
-	device_set_wakeup_capable(&pdev->dev, true);
-
 	hcd = usb_create_hcd(driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd)
 		return -ENOMEM;
@@ -256,8 +252,6 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	if (device_property_read_bool(&pdev->dev, "usb3-lpm-capable"))
 		xhci->quirks |= XHCI_LPM_SUPPORT;
 
-	if (device_property_read_bool(&pdev->dev, "xhci-stream-quirk"))
-		xhci->quirks |= XHCI_STREAM_QUIRK;
 
 	hcd->usb_phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
 	if (IS_ERR(hcd->usb_phy)) {
@@ -335,16 +329,6 @@ static int xhci_plat_suspend(struct device *dev)
 	struct usb_hcd	*hcd = dev_get_drvdata(dev);
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 
-#if IS_ENABLED(CONFIG_USB_DWC3_OF_SIMPLE)
-	/* Inform dwc3 driver about the device wakeup capability */
-	if (device_may_wakeup(&hcd->self.root_hub->dev)) {
-		enable_irq_wake(hcd->irq);
-		dwc3_host_wakeup_capable(dev, true);
-	} else {
-		dwc3_host_wakeup_capable(dev, false);
-	}
-#endif
-
 	/*
 	 * xhci_suspend() needs `do_wakeup` to know whether host is allowed
 	 * to do wakeup during suspend. Since xhci_plat_suspend is currently
@@ -360,9 +344,6 @@ static int xhci_plat_resume(struct device *dev)
 {
 	struct usb_hcd	*hcd = dev_get_drvdata(dev);
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
-
-	if (device_may_wakeup(&hcd->self.root_hub->dev))
-		disable_irq_wake(hcd->irq);
 
 	return xhci_resume(xhci, 0);
 }

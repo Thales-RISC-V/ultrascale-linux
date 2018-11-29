@@ -44,7 +44,6 @@
 #define XDSI_TIME2			0x54
 #define XDSI_TIME2_VACT(x)		(((x) & 0xffff) << 0)
 #define XDSI_TIME2_HACT(x)		(((x) & 0xffff) << 16)
-#define XDSI_HACT_MULTIPLIER		GENMASK(1, 0)
 #define XDSI_TIME3			0x58
 #define XDSI_TIME3_HFP(x)		(((x) & 0xffff) << 0)
 #define XDSI_TIME3_HBP(x)		(((x) & 0xffff) << 16)
@@ -54,33 +53,25 @@
 #define XDSI_TIME4_VSA(x)		(((x) & 0xff) << 16)
 #define XDSI_LTIME			0x60
 #define XDSI_BLLP_TIME			0x64
-#define XDSI_NUM_DATA_TYPES		4
+#define XDSI_NUM_DATA_TYPES		5
+#define XDSI_NUM_PIXELS_PER_BEAT	3
 #define XDSI_VIDEO_MODE_SYNC_PULSE	0x0
 #define XDSI_VIDEO_MODE_SYNC_EVENT	0x1
 #define XDSI_VIDEO_MODE_BURST		0x2
 
-/*
- * Used as a multiplication factor for HACT based on used
- * DSI data type.
- *
- * e.g. for RGB666_L datatype and 1920x1080 resolution,
- * the Hact (WC) would be as follows -
- * 1920 pixels * 18 bits per pixel / 8 bits per byte
- * = 1920 pixels * 2.25 bytes per pixel = 4320 bytes.
- *
- * Data Type - Multiplication factor
- * RGB888    - 3
- * RGB666_L  - 2.25
- * RGB666_P  - 2.25
- * RGB565    - 2
- *
- * Since the multiplication factor maybe a floating number,
- * a 100x multiplication factor is used.
- *
- * XDSI_NUM_DATA_TYPES represents number of data types in the
- * enum mipi_dsi_pixel_format in the MIPI DSI part of DRM framework.
+/**
+ * used as a multiplication factor for HACT based on used
+ * DSI data type and pixels per beat.
+ * e.g. for RGB666_L with 2 pixels per beat, (6+6+6)*2 = 36.
+ * To make it multiples of 8, 36+4 = 40.
+ * So, multiplication factor is = 40/8 which gives 5
  */
-static const int xdsi_mul_factor[XDSI_NUM_DATA_TYPES] = {300, 225, 225, 200};
+int xdsi_mul_factor[XDSI_NUM_DATA_TYPES][XDSI_NUM_PIXELS_PER_BEAT] = {
+	{ 3, 6, 12 }, /* RGB888 = {1ppb, 2ppb, 4ppb} */
+	{ 3, 5, 9 }, /* RGB666_L = {1ppb, 2ppb, 4ppb} */
+	{ 3, 5, 9 }, /* RGB666_P = {1ppb, 2ppb, 4ppb} */
+	{ 2, 4, 8 }  /* RGB565 = {1ppb, 2ppb, 4ppb} */
+};
 
 /*
  * struct xilinx_dsi - Core configuration DSI Tx subsystem device structure
@@ -160,15 +151,15 @@ xilinx_dsi_set_default_drm_properties(struct xilinx_dsi *dsi)
 {
 	drm_object_property_set_value(&dsi->connector.base, dsi->eotp_prop, 1);
 	drm_object_property_set_value(&dsi->connector.base,
-				      dsi->bllp_mode_prop, 0);
+			dsi->bllp_mode_prop, 0);
 	drm_object_property_set_value(&dsi->connector.base,
-				      dsi->bllp_type_prop, 0);
+			dsi->bllp_type_prop, 0);
 	drm_object_property_set_value(&dsi->connector.base,
-				      dsi->video_mode_prop, 0);
+			dsi->video_mode_prop, 0);
 	drm_object_property_set_value(&dsi->connector.base,
-				      dsi->bllp_burst_time_prop, 0);
+			dsi->bllp_burst_time_prop, 0);
 	drm_object_property_set_value(&dsi->connector.base,
-				      dsi->cmd_queue_prop, 0);
+			dsi->cmd_queue_prop, 0);
 }
 
 /**
@@ -202,7 +193,7 @@ static void xilinx_dsi_set_config_parameters(struct xilinx_dsi *dsi)
 	xilinx_dsi_writel(dsi->iomem, XDSI_CMD, reg);
 
 	dev_dbg(dsi->dev, "PCR register value is = %x\n",
-		xilinx_dsi_readl(dsi->iomem, XDSI_PCR));
+			xilinx_dsi_readl(dsi->iomem, XDSI_PCR));
 }
 
 /**
@@ -222,8 +213,8 @@ static void xilinx_dsi_set_display_mode(struct xilinx_dsi *dsi)
 				XDSI_PCR_VIDEOMODE_SHIFT);
 
 	/* configure the HSA value only if non_burst_sync_pluse video mode */
-	if ((!video_mode) &&
-	    (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE)) {
+	if ((!video_mode) &
+		(dsi->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE)) {
 		reg = XDSI_TIME1_HSA(vm->hsync_len);
 		xilinx_dsi_writel(dsi->iomem, XDSI_TIME1, reg);
 	}
@@ -238,22 +229,9 @@ static void xilinx_dsi_set_display_mode(struct xilinx_dsi *dsi)
 	xilinx_dsi_writel(dsi->iomem, XDSI_TIME3, reg);
 
 	dev_dbg(dsi->dev, "mul factor for parsed datatype is = %d\n",
-		(dsi->mul_factor) / 100);
+			dsi->mul_factor);
 
-	/* The HACT parameter received from panel timing values should be
-	 * divisible by 4. The reason for this is, the word count given as
-	 * input to DSI controller is HACT * mul_factor. The mul_factor is
-	 * 3, 2.25, 2.25, 2 respectively for RGB888, RGB666_L, RGB666_P and
-	 * RGB565.
-	 * e.g. for RGB666_L color format and 1080p, the word count is
-	 * 1920*2.25 = 4320 which is divisible by 4 and it is a valid input
-	 * to DSI controller. Based on this 2.25 mul factor, we come up with
-	 * the division factor of (XDSI_HACT_MULTIPLIER) as 4 for checking
-	 */
-	if (((vm->hactive) & XDSI_HACT_MULTIPLIER) != 0)
-		dev_alert(dsi->dev, "Incorrect HACT will be programmed\n");
-
-	reg = XDSI_TIME2_HACT((vm->hactive) * (dsi->mul_factor) / 100) |
+	reg = XDSI_TIME2_HACT((vm->hactive) * dsi->mul_factor) |
 		XDSI_TIME2_VACT(vm->vactive);
 	xilinx_dsi_writel(dsi->iomem, XDSI_TIME2, reg);
 
@@ -298,8 +276,9 @@ static void xilinx_dsi_set_display_disable(struct xilinx_dsi *dsi)
 	dev_dbg(dsi->dev, "DSI Tx is disabled. reset regs to default values\n");
 }
 
+
 static void xilinx_dsi_encoder_dpms(struct drm_encoder *encoder,
-				    int mode)
+					int mode)
 {
 	struct xilinx_dsi *dsi = encoder_to_dsi(encoder);
 
@@ -332,13 +311,13 @@ static void xilinx_dsi_encoder_dpms(struct drm_encoder *encoder,
  */
 static int
 xilinx_dsi_connector_set_property(struct drm_connector *base_connector,
-				  struct drm_property *property,
+					struct drm_property *property,
 					u64 value)
 {
 	struct xilinx_dsi *dsi = connector_to_dsi(base_connector);
 
 	dev_dbg(dsi->dev, "property name = %s, value = %lld\n",
-		property->name, value);
+			property->name, value);
 
 	if (property == dsi->eotp_prop)
 		dsi->eotp_prop_val = !!value;
@@ -361,7 +340,7 @@ xilinx_dsi_connector_set_property(struct drm_connector *base_connector,
 }
 
 static int xilinx_dsi_host_attach(struct mipi_dsi_host *host,
-				  struct mipi_dsi_device *device)
+					struct mipi_dsi_device *device)
 {
 	u32 panel_lanes;
 	struct xilinx_dsi *dsi = host_to_dsi(host);
@@ -378,13 +357,13 @@ static int xilinx_dsi_host_attach(struct mipi_dsi_host *host,
 
 	if ((dsi->lanes > 4) || (dsi->lanes < 1)) {
 		dev_err(dsi->dev, "%d lanes : invalid xlnx,dsi-num-lanes\n",
-			dsi->lanes);
+				dsi->lanes);
 		return -EINVAL;
 	}
 
 	if (device->format != dsi->format) {
 		dev_err(dsi->dev, "Mismatch of format. panel = %d, DSI = %d\n",
-			device->format, dsi->format);
+				device->format, dsi->format);
 		return -EINVAL;
 	}
 
@@ -395,7 +374,7 @@ static int xilinx_dsi_host_attach(struct mipi_dsi_host *host,
 }
 
 static int xilinx_dsi_host_detach(struct mipi_dsi_host *host,
-				  struct mipi_dsi_device *device)
+					struct mipi_dsi_device *device)
 {
 	struct xilinx_dsi *dsi = host_to_dsi(host);
 
@@ -413,10 +392,11 @@ static const struct mipi_dsi_host_ops xilinx_dsi_ops = {
 };
 
 static int xilinx_dsi_connector_dpms(struct drm_connector *connector,
-				     int mode)
+					int mode)
 {
 	struct xilinx_dsi *dsi = connector_to_dsi(connector);
 	int ret;
+	bool panel_on = 0;
 
 	dev_dbg(dsi->dev, "connector dpms state: %d\n", mode);
 
@@ -470,7 +450,7 @@ static void xilinx_dsi_connector_destroy(struct drm_connector *connector)
 	connector->dev = NULL;
 }
 
-static const struct drm_connector_funcs xilinx_dsi_connector_funcs = {
+static struct drm_connector_funcs xilinx_dsi_connector_funcs = {
 	.dpms = xilinx_dsi_connector_dpms,
 	.detect = xilinx_dsi_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
@@ -544,19 +524,19 @@ xilinx_drm_dsi_connector_attach_property(struct drm_connector *base_connector)
 
 	if (dsi->bllp_burst_time_prop)
 		drm_object_attach_property(&base_connector->base,
-					   dsi->bllp_burst_time_prop, 0);
+					dsi->bllp_burst_time_prop, 0);
 
 	if (dsi->bllp_mode_prop)
 		drm_object_attach_property(&base_connector->base,
-					   dsi->bllp_mode_prop, 0);
+					dsi->bllp_mode_prop, 0);
 
 	if (dsi->bllp_type_prop)
 		drm_object_attach_property(&base_connector->base,
-					   dsi->bllp_type_prop, 0);
+					dsi->bllp_type_prop, 0);
 
 	if (dsi->cmd_queue_prop)
 		drm_object_attach_property(&base_connector->base,
-					   dsi->cmd_queue_prop, 0);
+				dsi->cmd_queue_prop, 0);
 }
 
 static int xilinx_dsi_create_connector(struct drm_encoder *encoder)
@@ -585,7 +565,7 @@ static int xilinx_dsi_create_connector(struct drm_encoder *encoder)
 }
 
 static bool xilinx_dsi_mode_fixup(struct drm_encoder *encoder,
-				  const struct drm_display_mode *mode,
+					const struct drm_display_mode *mode,
 					struct drm_display_mode *adjusted_mode)
 {
 	return true;
@@ -633,12 +613,12 @@ static void xilinx_dsi_commit(struct drm_encoder *encoder)
 	struct xilinx_dsi *dsi = encoder_to_dsi(encoder);
 
 	dev_dbg(dsi->dev, "config and enable the DSI: %s %d\n",
-		__func__, __LINE__);
+			 __func__, __LINE__);
 
 	xilinx_dsi_encoder_dpms(encoder, DRM_MODE_DPMS_ON);
 }
 
-static const struct drm_encoder_helper_funcs xilinx_dsi_encoder_helper_funcs = {
+static struct drm_encoder_helper_funcs xilinx_dsi_encoder_helper_funcs = {
 	.dpms = xilinx_dsi_encoder_dpms,
 	.mode_fixup = xilinx_dsi_mode_fixup,
 	.mode_set = xilinx_dsi_mode_set,
@@ -646,7 +626,7 @@ static const struct drm_encoder_helper_funcs xilinx_dsi_encoder_helper_funcs = {
 	.commit = xilinx_dsi_commit,
 };
 
-static const struct drm_encoder_funcs xilinx_dsi_encoder_funcs = {
+static struct drm_encoder_funcs xilinx_dsi_encoder_funcs = {
 	.destroy = drm_encoder_cleanup,
 };
 
@@ -655,10 +635,10 @@ static int xilinx_dsi_parse_dt(struct xilinx_dsi *dsi)
 	struct device *dev = dsi->dev;
 	struct device_node *node = dev->of_node;
 	int ret;
-	u32 datatype;
+	u32 pixels_per_beat, datatype;
 
 	ret = of_property_read_u32(node, "xlnx,dsi-num-lanes",
-				   &dsi->lanes);
+				&dsi->lanes);
 	if (ret < 0) {
 		dev_err(dsi->dev, "missing xlnx,dsi-num-lanes property\n");
 		return ret;
@@ -667,6 +647,20 @@ static int xilinx_dsi_parse_dt(struct xilinx_dsi *dsi)
 	if ((dsi->lanes > 4) || (dsi->lanes < 1)) {
 		dev_err(dsi->dev, "%d lanes : invalid xlnx,dsi-num-lanes\n",
 			dsi->lanes);
+		return -EINVAL;
+	}
+
+	ret = of_property_read_u32(node, "xlnx,dsi-pixels-perbeat",
+					&pixels_per_beat);
+	if (ret < 0) {
+		dev_err(dsi->dev, "missing xlnx,dsi-pixels-perbeat property\n");
+		return ret;
+	}
+
+	if ((pixels_per_beat != 1) &&
+		(pixels_per_beat != 2) &&
+		(pixels_per_beat != 4)) {
+		dev_err(dsi->dev, "Wrong dts val xlnx,dsi-pixels-perbeat\n");
 		return -EINVAL;
 	}
 
@@ -679,14 +673,16 @@ static int xilinx_dsi_parse_dt(struct xilinx_dsi *dsi)
 
 	dsi->format = datatype;
 
-	if (datatype > MIPI_DSI_FMT_RGB565) {
+	if ((datatype > MIPI_DSI_FMT_RGB565) ||
+		(datatype < MIPI_DSI_FMT_RGB888)) {
 		dev_err(dsi->dev, "Invalid xlnx,dsi-data-type string\n");
 		return -EINVAL;
 	}
 
-	dsi->mul_factor = xdsi_mul_factor[datatype];
+	dsi->mul_factor = xdsi_mul_factor[datatype][pixels_per_beat >> 1];
 
-	dev_dbg(dsi->dev, "DSI controller num lanes = %d", dsi->lanes);
+	dev_dbg(dsi->dev, "DSI controller num lanes = %d,pixels per beat = %d",
+				dsi->lanes, pixels_per_beat);
 
 	dev_dbg(dsi->dev, "DSI controller datatype = %d\n", datatype);
 
@@ -694,7 +690,7 @@ static int xilinx_dsi_parse_dt(struct xilinx_dsi *dsi)
 }
 
 static int xilinx_dsi_bind(struct device *dev, struct device *master,
-			   void *data)
+				void *data)
 {
 	struct xilinx_dsi *dsi = dev_get_drvdata(dev);
 	struct drm_encoder *encoder = &dsi->encoder;
@@ -731,7 +727,7 @@ static int xilinx_dsi_bind(struct device *dev, struct device *master,
 }
 
 static void xilinx_dsi_unbind(struct device *dev, struct device *master,
-			      void *data)
+				void *data)
 {
 	struct xilinx_dsi *dsi = dev_get_drvdata(dev);
 
@@ -766,7 +762,7 @@ static int xilinx_dsi_probe(struct platform_device *pdev)
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	dsi->iomem = devm_ioremap_resource(dev, res);
 	dev_dbg(dsi->dev, "dsi virtual address = %p %s %d\n",
-		dsi->iomem, __func__, __LINE__);
+			dsi->iomem, __func__, __LINE__);
 
 	if (IS_ERR(dsi->iomem)) {
 		dev_err(dev, "failed to remap io region\n");
@@ -791,7 +787,7 @@ static const struct of_device_id xilinx_dsi_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, xilinx_dsi_of_match);
 
-static struct platform_driver dsi_driver = {
+struct platform_driver dsi_driver = {
 	.probe = xilinx_dsi_probe,
 	.remove = xilinx_dsi_remove,
 	.driver = {

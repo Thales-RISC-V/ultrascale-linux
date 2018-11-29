@@ -142,7 +142,7 @@
 #define ECC_POISON0_OFST	0xB8
 #define ECC_POISON1_OFST	0xBC
 
-/* Control register bitfield definitions */
+/* Control regsiter bitfield definitions */
 #define ECC_CTRL_BUSWIDTH_MASK	0x3000
 #define ECC_CTRL_BUSWIDTH_SHIFT	12
 #define ECC_CTRL_CLR_CE_ERRCNT	BIT(2)
@@ -153,14 +153,14 @@
 #define DDRCTL_EWDTH_32		1
 #define DDRCTL_EWDTH_64		0
 
-/* ECC status register definitions */
+/* ECC status regsiter definitions */
 #define ECC_STAT_UECNT_MASK	0xF0000
 #define ECC_STAT_UECNT_SHIFT	16
 #define ECC_STAT_CECNT_MASK	0xF00
 #define ECC_STAT_CECNT_SHIFT	8
 #define ECC_STAT_BITNUM_MASK	0x7F
 
-/* DDR QOS Interrupt register definitions */
+/* DDR QOS Interrupt regsiter definitions */
 #define DDR_QOS_IRQ_STAT_OFST	0x20200
 #define DDR_QOSUE_MASK		0x4
 #define	DDR_QOSCE_MASK		0x2
@@ -201,8 +201,8 @@
 #define DDRC_MSTR_DEV_CONFIG_SHIFT	30
 #define DDRC_MSTR_DEV_CONFIG_X4_MASK	0
 #define DDRC_MSTR_DEV_CONFIG_X8_MASK	1
-#define DDRC_MSTR_DEV_CONFIG_X16_MASK	0x2
-#define DDRC_MSTR_DEV_CONFIG_X32_MASK	0x3
+#define DDRC_MSTR_DEV_CONFIG_X16_MASK	0x10
+#define DDRC_MSTR_DEV_CONFIG_X32_MASK	0X11
 
 /* DDR4 and DDR3 device Row,Column,Bank Mapping */
 #define DDR4_COL_SHIFT		3
@@ -997,10 +997,10 @@ static ssize_t synps_edac_mc_inject_data_poison_store(struct device *dev,
 	return count;
 }
 
-static DEVICE_ATTR(inject_data_error, 0644,
+static DEVICE_ATTR(inject_data_error, S_IRUGO | S_IWUSR,
 	    synps_edac_mc_inject_data_error_show,
 	    synps_edac_mc_inject_data_error_store);
-static DEVICE_ATTR(inject_data_poison, 0644,
+static DEVICE_ATTR(inject_data_poison, S_IRUGO | S_IWUSR,
 	    synps_edac_mc_inject_data_poison_show,
 	    synps_edac_mc_inject_data_poison_store);
 

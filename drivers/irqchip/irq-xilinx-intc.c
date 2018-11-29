@@ -32,8 +32,8 @@ struct intc {
 	u32 nr_irq;
 	u32 intr_mask;
 	struct irq_domain *domain;
-	unsigned int (*read_fn)(void __iomem *addr);
-	void (*write_fn)(u32, void __iomem *addr);
+	unsigned int (*read_fn)(void __iomem *);
+	void (*write_fn)(u32, void __iomem *);
 };
 
 /* No one else should require these constants, so define them locally here. */
